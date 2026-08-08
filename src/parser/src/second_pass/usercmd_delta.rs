@@ -306,14 +306,14 @@ fn replace_if_some<T>(target: &mut Option<T>, value: Option<T>) {
 }
 
 fn merge_buttons(target: &mut Option<CInButtonStatePb>, delta: CInButtonStatePb) {
-    let target = target.get_or_insert_default();
+    let target = target.get_or_insert_with(|| Default::default());
     replace_if_some(&mut target.buttonstate1, delta.buttonstate1);
     replace_if_some(&mut target.buttonstate2, delta.buttonstate2);
     replace_if_some(&mut target.buttonstate3, delta.buttonstate3);
 }
 
 fn merge_qangle(target: &mut Option<CMsgQAngle>, delta: CMsgQAngle) {
-    let target = target.get_or_insert_default();
+    let target = target.get_or_insert_with(|| Default::default());
     replace_if_some(&mut target.x, delta.x);
     replace_if_some(&mut target.y, delta.y);
     replace_if_some(&mut target.z, delta.z);
@@ -335,7 +335,7 @@ pub(super) fn apply_delta(baseline: &CsgoUserCmdPb, delta_data: &[u8]) -> Option
     replace_if_some(&mut next.is_predicting_kill_ragdolls, delta.is_predicting_kill_ragdolls);
 
     if let Some(delta_base) = delta.base {
-        let base = next.base.get_or_insert_default();
+        let base = next.base.get_or_insert(Default::default());
         replace_if_some(&mut base.legacy_command_number, delta_base.legacy_command_number);
         replace_if_some(&mut base.client_tick, delta_base.client_tick);
         replace_if_some(&mut base.prediction_offset_ticks_x256, delta_base.prediction_offset_ticks_x256);
