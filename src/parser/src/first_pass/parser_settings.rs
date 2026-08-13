@@ -103,7 +103,7 @@ impl<'a> FirstPassParser<'a> {
             sendtable_message: None,
             needs_velocity: needs_velocity(&inputs.wanted_player_props),
             added_temp_props: vec![],
-            is_multithreadable: check_multithreadability(&inputs.wanted_player_props),
+            is_multithreadable: check_multithreadability(&inputs.wanted_player_props, &inputs.wanted_prop_states),
             stringtable_players: BTreeMap::default(),
             only_header: inputs.only_header,
             ge_list_set: false,
@@ -154,8 +154,8 @@ impl<'a> FirstPassParser<'a> {
         }
     }
 }
-pub fn check_multithreadability(player_props: &[String]) -> bool {
-    for name in player_props {
+pub fn check_multithreadability(player_props: &[String], prop_states: &AHashMap<String, Variant>) -> bool {
+    for name in player_props.iter().chain(prop_states.keys()) {
         if NON_MULTITHREADABLE_PROPS.contains(name) {
             return false;
         }

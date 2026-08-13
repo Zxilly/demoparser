@@ -249,6 +249,8 @@ pub enum DemoParserError {
     ImpossibleCmd,
     UnkVoiceFormat,
     MalformedVoicePacket,
+    InvalidThreadCount,
+    ThreadPoolBuildFailure(String),
 }
 
 impl std::error::Error for DemoParserError {}

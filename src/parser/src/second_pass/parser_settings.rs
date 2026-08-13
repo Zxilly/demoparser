@@ -163,18 +163,12 @@ impl<'a> SecondPassParser<'a> {
         }
     }
     pub fn new(
-        first_pass_output: FirstPassOutput<'a>,
+        first_pass_output: &FirstPassOutput<'a>,
         offset: usize,
         parse_all_packets: bool,
         start_end_offset: Option<StartEndOffset>,
     ) -> Result<Self, DemoParserError> {
-        first_pass_output
-            .settings
-            .wanted_player_props
-            .clone()
-            .extend(vec!["tick".to_owned(), "steamid".to_owned(), "name".to_owned()]);
-        let args: Vec<String> = env::args().collect();
-        let debug = if args.len() > 2 { args[2] == "true" } else { false };
+        let debug = env::args().nth(2).is_some_and(|arg| arg == "true");
 
         Ok(SecondPassParser {
             uniq_prop_names: AHashSet::default(),
@@ -192,27 +186,31 @@ impl<'a> SecondPassParser<'a> {
                 };
                 8192
             ],
-            parse_inventory: first_pass_output.prop_controller.wanted_player_props.contains(&"inventory".to_string()),
+            parse_inventory: first_pass_output
+                .prop_controller
+                .wanted_player_props
+                .iter()
+                .any(|prop| prop == "inventory"),
             net_tick: 0,
             c4_entity_id: None,
-            stringtable_players: first_pass_output.stringtable_players,
+            stringtable_players: first_pass_output.stringtable_players.clone(),
             is_debug_mode: debug,
             projectile_records: vec![],
             parse_all_packets: parse_all_packets,
             wanted_players: first_pass_output.wanted_players.clone(),
             wanted_ticks: first_pass_output.wanted_ticks.clone(),
-            prop_controller: &first_pass_output.prop_controller,
-            qf_mapper: &first_pass_output.qfmap,
+            prop_controller: first_pass_output.prop_controller,
+            qf_mapper: first_pass_output.qfmap,
             fullpackets_parsed: 0,
             serializers: AHashMap::default(),
             ptr: offset,
             ge_list: first_pass_output.ge_list,
-            cls_by_id: &first_pass_output.cls_by_id,
+            cls_by_id: first_pass_output.cls_by_id,
             entities: vec![None; DEFAULT_MAX_ENTITY_ID],
             cls_bits: None,
             tick: -99999,
             players: BTreeMap::default(),
-            output: AHashMap::default(),
+            output: AHashMap::with_capacity(first_pass_output.prop_controller.prop_infos.len()),
             game_events: vec![],
             wanted_events: first_pass_output.settings.wanted_events.clone(),
             parse_entities: first_pass_output.settings.parse_ents,
@@ -229,7 +227,7 @@ impl<'a> SecondPassParser<'a> {
             item_drops: vec![],
             skins: vec![],
             player_end_data: vec![],
-            huffman_lookup_table: &first_pass_output.settings.huffman_lookup_table,
+            huffman_lookup_table: first_pass_output.settings.huffman_lookup_table,
             header: HashMap::default(),
             list_props: first_pass_output.list_props,
         })

@@ -17,7 +17,9 @@ use itertools::Itertools;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::prelude::ParallelIterator;
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::sync::mpsc::{channel, Receiver};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -48,8 +50,10 @@ pub struct DemoOutput {
 pub struct Parser<'a> {
     input: ParserInputs<'a>,
     pub parsing_mode: ParsingMode,
+    thread_count: Option<usize>,
+    thread_pool: Option<Arc<ThreadPool>>,
 }
-#[derive(PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ParsingMode {
     ForceSingleThreaded,
     ForceMultiThreaded,
@@ -61,21 +65,53 @@ impl<'a> Parser<'a> {
         Parser {
             input: input,
             parsing_mode: parsing_mode,
+            thread_count: None,
+            thread_pool: None,
         }
     }
+
+    /// Limit this parser instance to a specific number of worker threads.
+    ///
+    /// The parser uses a private Rayon thread pool, so this setting does not
+    /// affect other parser instances or the process-wide Rayon pool. The pool
+    /// is reused by subsequent parses. A value of `1` forces the
+    /// single-threaded parsing path.
+    pub fn set_thread_count(&mut self, thread_count: usize) -> Result<(), DemoParserError> {
+        if thread_count == 0 {
+            return Err(DemoParserError::InvalidThreadCount);
+        }
+        let thread_pool = if thread_count == 1 {
+            None
+        } else {
+            Some(Arc::new(
+                ThreadPoolBuilder::new()
+                    .num_threads(thread_count)
+                    .build()
+                    .map_err(|error| DemoParserError::ThreadPoolBuildFailure(error.to_string()))?,
+            ))
+        };
+        self.thread_count = Some(thread_count);
+        self.thread_pool = thread_pool;
+        Ok(())
+    }
+
     pub fn parse_demo(&mut self, demo_bytes: &[u8]) -> Result<DemoOutput, DemoParserError> {
-        let _prof = std::env::var("CS2_PROF").is_ok();
-        let _t = std::time::Instant::now();
+        if let Some(pool) = self.thread_pool.clone() {
+            return pool.install(|| self.parse_demo_inner(demo_bytes));
+        }
+        self.parse_demo_inner(demo_bytes)
+    }
+
+    fn parse_demo_inner(&mut self, demo_bytes: &[u8]) -> Result<DemoOutput, DemoParserError> {
         let mut first_pass_parser = FirstPassParser::new(&self.input);
         let first_pass_output = first_pass_parser.parse_demo(demo_bytes, false)?;
-        if _prof {
-            eprintln!("[prof] first_pass: {:.3}s", _t.elapsed().as_secs_f64());
-        }
-        if self.parsing_mode == ParsingMode::Normal
-            && check_multithreadability(&self.input.wanted_player_props)
-            && !(self.parsing_mode == ParsingMode::ForceSingleThreaded)
-            || self.parsing_mode == ParsingMode::ForceMultiThreaded
-        {
+        let use_multiple_threads = self.thread_count != Some(1)
+            && match self.parsing_mode {
+                ParsingMode::ForceSingleThreaded => false,
+                ParsingMode::ForceMultiThreaded => true,
+                ParsingMode::Normal => check_multithreadability(&self.input.wanted_player_props, &self.input.wanted_prop_states),
+            };
+        if use_multiple_threads {
             return self.second_pass_multi_threaded(demo_bytes, first_pass_output);
         } else {
             self.second_pass_single_threaded(demo_bytes, first_pass_output)
@@ -87,7 +123,7 @@ impl<'a> Parser<'a> {
             .fullpacket_offsets
             .par_iter()
             .map(|offset| {
-                let mut parser = SecondPassParser::new(first_pass_output.clone(), *offset, false, None)?;
+                let mut parser = SecondPassParser::new(&first_pass_output, *offset, false, None)?;
                 parser.start(outer_bytes)?;
                 Ok(parser.create_output())
             })
@@ -131,21 +167,15 @@ impl<'a> Parser<'a> {
         events.extend(ids.values().map(|x| x.clone()));
     }
     fn second_pass_single_threaded(&self, outer_bytes: &[u8], first_pass_output: FirstPassOutput) -> Result<DemoOutput, DemoParserError> {
-        let prof = std::env::var("CS2_PROF").is_ok();
-        let mut t = std::time::Instant::now();
-        let mut parser = SecondPassParser::new(first_pass_output.clone(), 16, true, None)?;
+        let mut parser = SecondPassParser::new(&first_pass_output, 16, true, None)?;
         parser.start(outer_bytes)?;
-        if prof { eprintln!("[prof] second_pass start(): {:.3}s", t.elapsed().as_secs_f64()); t = std::time::Instant::now(); }
         let second_pass_output = parser.create_output();
-        if prof { eprintln!("[prof] create_output: {:.3}s", t.elapsed().as_secs_f64()); t = std::time::Instant::now(); }
         let mut outputs = self.combine_outputs(&mut vec![second_pass_output], first_pass_output);
-        if prof { eprintln!("[prof] combine_outputs: {:.3}s", t.elapsed().as_secs_f64()); t = std::time::Instant::now(); }
         if let Some(new_df) = self.rm_unwanted_ticks(&mut outputs.df) {
             outputs.df = new_df;
         }
         Parser::add_item_purchase_sell_column(&mut outputs.game_events);
         Parser::remove_item_sold_events(&mut outputs.game_events);
-        if prof { eprintln!("[prof] post-proc: {:.3}s", t.elapsed().as_secs_f64()); }
         Ok(outputs)
     }
     fn second_pass_threaded_with_channels(
@@ -169,7 +199,7 @@ impl<'a> Parser<'a> {
                     }
                     let my_first_out = first_pass_output.clone();
                     handles.push(s.spawn(move || {
-                        let mut parser = SecondPassParser::new(my_first_out, start_end_offset.start, false, Some(start_end_offset))?;
+                        let mut parser = SecondPassParser::new(&my_first_out, start_end_offset.start, false, Some(start_end_offset))?;
                         parser.start(outer_bytes)?;
                         Ok(parser.create_output())
                     }));
@@ -208,7 +238,7 @@ impl<'a> Parser<'a> {
             .fullpacket_offsets
             .par_iter()
             .map(|offset| {
-                let mut parser = SecondPassParser::new(first_pass_output.clone(), *offset, false, None)?;
+                let mut parser = SecondPassParser::new(&first_pass_output, *offset, false, None)?;
                 parser.start(outer_bytes)?;
                 Ok(parser.create_output())
             })
@@ -500,5 +530,67 @@ impl SellBackHelper {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod thread_count_tests {
+    use super::{Parser, ParsingMode};
+    use crate::first_pass::parser_settings::ParserInputs;
+    use ahash::AHashMap;
+
+    fn parser(huffman_lookup_table: &Vec<(u8, u8)>) -> Parser<'_> {
+        Parser::new(
+            ParserInputs {
+                real_name_to_og_name: AHashMap::default(),
+                wanted_players: vec![],
+                wanted_player_props: vec![],
+                wanted_other_props: vec![],
+                wanted_prop_states: AHashMap::default(),
+                wanted_ticks: vec![],
+                wanted_events: vec![],
+                parse_ents: false,
+                parse_projectiles: false,
+                parse_grenades: false,
+                only_header: false,
+                only_convars: false,
+                huffman_lookup_table,
+                order_by_steamid: false,
+                list_props: false,
+                fallback_bytes: None,
+            },
+            ParsingMode::Normal,
+        )
+    }
+
+    #[test]
+    fn rejects_zero_threads() {
+        let huffman_lookup_table = vec![];
+        let mut parser = parser(&huffman_lookup_table);
+
+        assert!(parser.set_thread_count(0).is_err());
+        assert_eq!(parser.thread_count, None);
+    }
+
+    #[test]
+    fn thread_count_can_be_reconfigured() {
+        let huffman_lookup_table = vec![];
+        let mut parser = parser(&huffman_lookup_table);
+
+        parser.set_thread_count(1).unwrap();
+        assert_eq!(parser.thread_count, Some(1));
+
+        parser.set_thread_count(4).unwrap();
+        assert_eq!(parser.thread_count, Some(4));
+        assert_eq!(parser.parsing_mode, ParsingMode::Normal);
+    }
+
+    #[test]
+    fn configured_pool_preserves_parse_errors() {
+        let huffman_lookup_table = vec![];
+        let mut parser = parser(&huffman_lookup_table);
+        parser.set_thread_count(2).unwrap();
+
+        assert!(parser.parse_demo(&[0; 16]).is_err());
     }
 }

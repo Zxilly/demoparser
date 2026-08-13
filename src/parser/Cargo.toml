@@ -3,6 +3,9 @@ name = "parser"
 version = "0.1.1"
 edition = "2021"
 
+[features]
+voice = []
+
 [dependencies]
 bitter = "0.7.0"
 prost = "0.13.3"

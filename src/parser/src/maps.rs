@@ -1162,6 +1162,10 @@ pub static GRENADE_FRIENDLY_NAMES: phf::Map<&'static str, &'static str> = phf_ma
     "CFlashbangProjectile" => "flashbang",
 };
 pub static NON_MULTITHREADABLE_PROPS: phf::Set<&'static str> = phf_set! {
+    "velocity",
+    "velocity_X",
+    "velocity_Y",
+    "velocity_Z",
     "CCSPlayerController.CCSPlayerController_ActionTrackingServices.m_iUtilityDamage",
     "CCSPlayerController.CCSPlayerController_ActionTrackingServices.CSPerRoundStats_t.m_iCashEarned",
     "CCSPlayerController.CCSPlayerController_ActionTrackingServices.m_iEnemiesFlashed",

@@ -5,7 +5,7 @@ use crate::first_pass::prop_controller::*;
 use crate::first_pass::read_bits::DemoParserError;
 use crate::maps::BUTTONMAP;
 use crate::maps::PLAYER_COLOR;
-use crate::second_pass::entities::EntityType;
+use crate::second_pass::entities::{Entity, EntityType};
 use crate::second_pass::parser_settings::SecondPassParser;
 use crate::second_pass::variants::PropColumn;
 use crate::second_pass::variants::VarVec;
@@ -91,10 +91,11 @@ impl<'a> SecondPassParser<'a> {
             }
             let mut velocity_indicies: Option<Vec<usize>> = None;
             let mut button_mask: Option<Option<u64>> = None;
+            let player_entity = self.entities.get(*entity_id as usize).and_then(Option::as_ref);
             if self.order_by_steamid {
                 for prop_info in &self.prop_controller.prop_infos {
                     // find_prop borrows &self; resolve the value before the &mut df_per_player borrow.
-                    let val = self.find_prop_with_collect_cache(prop_info, entity_id, player, &mut velocity_indicies, &mut button_mask);
+                    let val = self.find_prop_with_collect_cache(prop_info, entity_id, player, player_entity, &mut velocity_indicies, &mut button_mask);
                     self.df_per_player
                         .entry(player_steamid)
                         .or_default()
@@ -104,7 +105,7 @@ impl<'a> SecondPassParser<'a> {
                 }
             } else {
                 for prop_info in &self.prop_controller.prop_infos {
-                    let val = self.find_prop_with_collect_cache(prop_info, entity_id, player, &mut velocity_indicies, &mut button_mask);
+                    let val = self.find_prop_with_collect_cache(prop_info, entity_id, player, player_entity, &mut velocity_indicies, &mut button_mask);
                     self.output
                         .entry(prop_info.id)
                         .or_insert_with(PropColumn::new)
@@ -120,6 +121,7 @@ impl<'a> SecondPassParser<'a> {
         prop_info: &PropInfo,
         entity_id: &i32,
         player: &PlayerMetaData,
+        player_entity: Option<&Entity>,
         velocity_indicies: &mut Option<Vec<usize>>,
         button_mask: &mut Option<Option<u64>>,
     ) -> Option<Variant> {
@@ -129,6 +131,7 @@ impl<'a> SecondPassParser<'a> {
             VELOCITY_Y_ID => self.collect_velocity_axis_cached(player, CoordinateAxis::Y, velocity_indicies).ok(),
             VELOCITY_Z_ID => self.collect_velocity_axis_cached(player, CoordinateAxis::Z, velocity_indicies).ok(),
             _ if prop_info.prop_type == PropType::Button => self.get_button_prop_cached(prop_info, entity_id, button_mask).ok(),
+            _ if prop_info.prop_type == PropType::Player => player_entity.and_then(|entity| entity.props.get(&prop_info.id)).cloned(),
             _ => self.find_prop(prop_info, entity_id, player).ok(),
         }
     }

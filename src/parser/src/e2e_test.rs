@@ -1182,6 +1182,113 @@ mod tests {
     lazy_static! {
         static ref out: (DemoOutput, PropController, BTreeMap<std::string::String, Vec<GameEvent>>) = create_data();
     }
+
+    #[test]
+    fn stateful_props_fall_back_to_identical_single_threaded_output() {
+        let huf = create_huffman_lookup_table();
+        let settings = ParserInputs {
+            wanted_players: vec![],
+            real_name_to_og_name: AHashMap::default(),
+            wanted_player_props: [
+                "health",
+                "X",
+                "Y",
+                "Z",
+                "velocity_X",
+                "velocity_Y",
+                "velocity_Z",
+                "is_alive",
+                "team_num",
+                "active_weapon_name",
+                "FORWARD",
+                "is_walking",
+                "is_airborne",
+                "flash_duration",
+                "armor_value",
+                "balance",
+            ]
+            .iter()
+            .map(|prop| prop.to_string())
+            .collect(),
+            wanted_events: vec![],
+            wanted_other_props: vec![],
+            parse_ents: true,
+            wanted_ticks: vec![],
+            parse_projectiles: false,
+            parse_grenades: false,
+            only_header: false,
+            list_props: false,
+            only_convars: false,
+            huffman_lookup_table: &huf,
+            order_by_steamid: false,
+            wanted_prop_states: AHashMap::default(),
+            fallback_bytes: None,
+        };
+        let file = File::open("test_demo.dem").unwrap();
+        let mmap = unsafe { MmapOptions::new().map(&file).unwrap() };
+
+        let mut single_threaded = Parser::new(settings.clone(), crate::parse_demo::ParsingMode::Normal);
+        single_threaded.set_thread_count(1).unwrap();
+        let single_threaded = single_threaded.parse_demo(&mmap).unwrap();
+
+        let mut multi_threaded = Parser::new(settings, crate::parse_demo::ParsingMode::Normal);
+        multi_threaded.set_thread_count(2).unwrap();
+        let multi_threaded = multi_threaded.parse_demo(&mmap).unwrap();
+
+        assert_eq!(single_threaded.df, multi_threaded.df);
+    }
+
+    #[test]
+    fn safe_props_produce_identical_multi_threaded_output() {
+        let huf = create_huffman_lookup_table();
+        let settings = ParserInputs {
+            wanted_players: vec![],
+            real_name_to_og_name: AHashMap::default(),
+            wanted_player_props: ["health", "X", "Y", "Z", "team_num", "active_weapon_name", "FORWARD"]
+                .iter()
+                .map(|prop| prop.to_string())
+                .collect(),
+            wanted_events: vec![],
+            wanted_other_props: vec![],
+            parse_ents: true,
+            wanted_ticks: vec![],
+            parse_projectiles: false,
+            parse_grenades: false,
+            only_header: false,
+            list_props: false,
+            only_convars: false,
+            huffman_lookup_table: &huf,
+            order_by_steamid: false,
+            wanted_prop_states: AHashMap::default(),
+            fallback_bytes: None,
+        };
+        let file = File::open("test_demo.dem").unwrap();
+        let mmap = unsafe { MmapOptions::new().map(&file).unwrap() };
+
+        let mut single_threaded = Parser::new(settings.clone(), crate::parse_demo::ParsingMode::ForceSingleThreaded);
+        let single_threaded = single_threaded.parse_demo(&mmap).unwrap();
+
+        let mut multi_threaded = Parser::new(settings, crate::parse_demo::ParsingMode::ForceMultiThreaded);
+        multi_threaded.set_thread_count(2).unwrap();
+        let multi_threaded = multi_threaded.parse_demo(&mmap).unwrap();
+
+        assert_eq!(single_threaded.df, multi_threaded.df);
+    }
+
+    #[test]
+    fn stateful_prop_filters_are_not_multithreadable() {
+        let mut prop_states = AHashMap::default();
+        prop_states.insert(
+            "velocity_X".to_string(),
+            crate::second_pass::variants::Variant::F32(0.0),
+        );
+
+        assert!(!crate::first_pass::parser_settings::check_multithreadability(
+            &[],
+            &prop_states
+        ));
+    }
+
     #[test]
     fn test_player_filter() {
         let huf = create_huffman_lookup_table();
