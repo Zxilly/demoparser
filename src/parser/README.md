@@ -41,6 +41,9 @@ fn main() {
         order_by_steamid: false,
     };
     let mut ds = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+    // Optional: use a private worker pool with a fixed size. Use 1 to force
+    // the single-threaded path; omit this call to keep automatic behavior.
+    ds.set_thread_count(4).unwrap();
     let file = File::open(path_to_demo).unwrap();
     let mmap = unsafe { MmapOptions::new().map(&file).unwrap() };
     let _output = ds.parse_demo(&mmap).unwrap();
@@ -162,4 +165,3 @@ This part combined with command "DEM_SendTables" are by far the most comlicated 
 ### Other stuff
 
 The demo has 2 headers. First header 16 bytes and is just demo magic + how long file is expected to be. The other header is the message DEM_FileHeader and has some more info like what map was played.
-

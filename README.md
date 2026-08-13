@@ -32,6 +32,25 @@ let event_json = parseEvent("path_to_demo.dem", "player_death", ["X", "Y"], ["to
 let ticks_json = parseTicks("path_to_demo.dem", ["X", "Y"])
 ```
 
+### Thread configuration
+
+The parser automatically uses multiple CPU cores when the requested fields can
+be split safely across full-packet boundaries. You can give an individual
+parser a fixed worker limit without changing Rayon's process-wide pool:
+
+```python
+from demoparser2 import DemoParser
+
+parser = DemoParser("path_to_demo.dem", threads=4)
+ticks_df = parser.parse_ticks(["X", "Y"])
+```
+
+In Node.js, parsing functions accept an optional final `threads` argument. For
+example, `parseVoice("path_to_demo.dem", 4)` uses four workers. Pass `1` to
+force the single-threaded path. Omitting the option preserves the automatic
+behavior. Fields whose state cannot be combined safely still fall back to the
+single-threaded parser.
+
 ### Examples in Python and JavaScript
 - [Examples](./examples)
 

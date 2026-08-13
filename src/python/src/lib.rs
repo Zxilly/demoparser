@@ -110,13 +110,21 @@ impl<'py> FromPyObject<'_, 'py> for WantedPropState {
 #[pymethods]
 impl DemoParser {
     #[new]
-    pub fn py_new(demo_path: String) -> PyResult<Self> {
+    #[pyo3(signature = (demo_path, *, threads=None))]
+    pub fn py_new(demo_path: String, threads: Option<usize>) -> PyResult<Self> {
+        if threads == Some(0) {
+            return Err(PyValueError::new_err("threads must be greater than zero"));
+        }
         let mmap = match create_mmap(demo_path.clone()) {
             Ok(mmap) => mmap,
             Err(e) => return Err(Exception::new_err(format!("{e}. File name: {demo_path}"))),
         };
         let huf = create_huffman_lookup_table();
-        Ok(Self { mmap, huf })
+        Ok(Self {
+            mmap,
+            huf,
+            thread_count: threads,
+        })
     }
 
     /// Parses header message (different from the first 16 bytes of the file)
@@ -173,7 +181,7 @@ impl DemoParser {
             order_by_steamid: false,
             fallback_bytes: None,
         };
-        let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+        let mut parser = self.create_parser(settings);
         let output = match parser.parse_demo(&self.mmap) {
             Ok(output) => output,
             Err(e) => return Err(Exception::new_err(format!("{e}"))),
@@ -199,7 +207,7 @@ impl DemoParser {
             order_by_steamid: false,
             fallback_bytes: None,
         };
-        let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+        let mut parser = self.create_parser(settings);
         let output = match parser.parse_demo(&self.mmap) {
             Ok(output) => output,
             Err(e) => return Err(Exception::new_err(format!("{e}"))),
@@ -251,7 +259,7 @@ impl DemoParser {
             fallback_bytes: None,
         };
 
-        let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+        let mut parser = self.create_parser(settings);
         let output = match parser.parse_demo(&self.mmap) {
             Ok(output) => output,
             Err(e) => return Err(Exception::new_err(format!("{e}"))),
@@ -348,7 +356,7 @@ impl DemoParser {
             order_by_steamid: false,
             fallback_bytes: None,
         };
-        let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+        let mut parser = self.create_parser(settings);
         let output = match parser.parse_demo(&self.mmap) {
             Ok(output) => output,
             Err(e) => return Err(Exception::new_err(format!("{e}"))),
@@ -397,7 +405,7 @@ impl DemoParser {
             order_by_steamid: false,
             fallback_bytes: None,
         };
-        let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+        let mut parser = self.create_parser(settings);
         let output = match parser.parse_demo(&self.mmap) {
             Ok(output) => output,
             Err(e) => return Err(Exception::new_err(format!("{e}"))),
@@ -482,7 +490,7 @@ impl DemoParser {
             order_by_steamid: false,
             fallback_bytes: None,
         };
-        let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+        let mut parser = self.create_parser(settings);
         let output = match parser.parse_demo(&self.mmap) {
             Ok(output) => output,
             Err(e) => return Err(Exception::new_err(format!("{e}"))),
@@ -587,7 +595,7 @@ impl DemoParser {
             order_by_steamid: false,
             fallback_bytes: None,
         };
-        let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+        let mut parser = self.create_parser(settings);
         let output = match parser.parse_demo(&self.mmap) {
             Ok(output) => output,
             Err(e) => return Err(Exception::new_err(format!("{e}"))),
@@ -648,7 +656,7 @@ impl DemoParser {
             order_by_steamid: false,
             fallback_bytes: None,
         };
-        let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+        let mut parser = self.create_parser(settings);
         let output = match parser.parse_demo(&self.mmap) {
             Ok(output) => output,
             Err(e) => return Err(Exception::new_err(format!("{e}"))),
@@ -678,7 +686,7 @@ impl DemoParser {
             order_by_steamid: false,
             fallback_bytes: None,
         };
-        let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+        let mut parser = self.create_parser(settings);
         let output = match parser.parse_demo(&self.mmap) {
             Ok(output) => output,
             Err(e) => return Err(PyValueError::new_err(format!("{e}"))),
@@ -757,7 +765,7 @@ impl DemoParser {
             order_by_steamid: false,
             fallback_bytes: None,
         };
-        let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+        let mut parser = self.create_parser(settings);
         let output = match parser.parse_demo(&self.mmap) {
             Ok(output) => output,
             Err(e) => return Err(Exception::new_err(format!("{e}"))),
@@ -962,6 +970,19 @@ pub fn arr_to_py(array: Box<dyn Array>) -> PyResult<Py<PyAny>> {
 struct DemoParser {
     mmap: Mmap,
     huf: Vec<(u8, u8)>,
+    thread_count: Option<usize>,
+}
+
+impl DemoParser {
+    fn create_parser<'a>(&self, settings: ParserInputs<'a>) -> Parser<'a> {
+        let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+        if let Some(thread_count) = self.thread_count {
+            parser
+                .set_thread_count(thread_count)
+                .expect("thread count is validated by DemoParser::py_new");
+        }
+        parser
+    }
 }
 
 pub fn series_from_multiple_events(

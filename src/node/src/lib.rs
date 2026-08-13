@@ -140,6 +140,16 @@ fn parse_demo(bytes: BytesVariant, parser: &mut Parser) -> Result<DemoOutput, Er
     },
   }
 }
+
+fn create_parser<'a>(settings: ParserInputs<'a>, threads: Option<u32>) -> napi::Result<Parser<'a>> {
+  let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+  if let Some(thread_count) = threads {
+    parser
+      .set_thread_count(thread_count as usize)
+      .map_err(|error| Error::new(Status::InvalidArg, error.to_string()))?;
+  }
+  Ok(parser)
+}
 #[napi(object)]
 pub struct VoiceData {
   pub tick: i32,
@@ -148,7 +158,10 @@ pub struct VoiceData {
 }
 
 #[napi]
-pub fn parse_voice(path_or_buf: Either<String, Buffer>) -> napi::Result<Vec<VoiceData>> {
+pub fn parse_voice(
+  path_or_buf: Either<String, Buffer>,
+  threads: Option<u32>,
+) -> napi::Result<Vec<VoiceData>> {
   let bytes = resolve_byte_type(path_or_buf).unwrap();
   let settings = ParserInputs {
     wanted_players: vec![],
@@ -168,7 +181,7 @@ pub fn parse_voice(path_or_buf: Either<String, Buffer>) -> napi::Result<Vec<Voic
     fallback_bytes: None,
     parse_grenades: false,
   };
-  let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+  let mut parser = create_parser(settings, threads)?;
   let output = parse_demo(bytes, &mut parser)?;
   let mut out = vec![];
 
@@ -185,7 +198,10 @@ pub fn parse_voice(path_or_buf: Either<String, Buffer>) -> napi::Result<Vec<Voic
 }
 
 #[napi]
-pub fn list_game_events(path_or_buf: Either<String, Buffer>) -> napi::Result<Value> {
+pub fn list_game_events(
+  path_or_buf: Either<String, Buffer>,
+  threads: Option<u32>,
+) -> napi::Result<Value> {
   let bytes = resolve_byte_type(path_or_buf)?;
 
   let huf = create_huffman_lookup_table();
@@ -207,7 +223,7 @@ pub fn list_game_events(path_or_buf: Either<String, Buffer>) -> napi::Result<Val
     fallback_bytes: None,
     parse_grenades: false,
   };
-  let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+  let mut parser = create_parser(settings, threads)?;
   let output = parse_demo(bytes, &mut parser)?;
 
   let v = Vec::from_iter(output.game_events_counter.iter());
@@ -224,6 +240,7 @@ pub fn parse_grenades(
   path_or_buf: Either<String, Buffer>,
   extra: Option<Vec<String>>,
   grenades: Option<bool>,
+  threads: Option<u32>,
 ) -> napi::Result<Value> {
   let bytes = resolve_byte_type(path_or_buf)?;
   let huf = create_huffman_lookup_table();
@@ -255,7 +272,7 @@ pub fn parse_grenades(
     fallback_bytes: None,
     parse_grenades: grenades,
   };
-  let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+  let mut parser = create_parser(settings, threads)?;
   let output = parse_demo(bytes, &mut parser)?;
 
   let mut real_name_to_og_name = AHashMap::default();
@@ -333,6 +350,7 @@ pub fn parse_event(
   player_extra: Option<Vec<String>>,
   other_extra: Option<Vec<String>>,
   game_event_list_bytes: Option<Buffer>,
+  threads: Option<u32>,
 ) -> napi::Result<Value> {
   let player_props = match player_extra {
     Some(p) => p,
@@ -386,7 +404,7 @@ pub fn parse_event(
     fallback_bytes: game_event_list_bytes,
     parse_grenades: false,
   };
-  let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+  let mut parser = create_parser(settings, threads)?;
   let output = parse_demo(bytes, &mut parser)?;
   let s = match serde_json::to_value(&output.game_events) {
     Ok(s) => s,
@@ -401,6 +419,7 @@ pub fn parse_events(
   player_extra: Option<Vec<String>>,
   other_extra: Option<Vec<String>>,
   game_event_list_bytes: Option<Buffer>,
+  threads: Option<u32>,
 ) -> napi::Result<Value> {
   let event_names = match event_names {
     None => return Err(Error::new(Status::InvalidArg, "No events provided!")),
@@ -458,7 +477,7 @@ pub fn parse_events(
     fallback_bytes: game_event_list_bytes,
     parse_grenades: false,
   };
-  let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+  let mut parser = create_parser(settings, threads)?;
   let output = parse_demo(bytes, &mut parser)?;
   let s = match serde_json::to_value(&output.game_events) {
     Ok(s) => s,
@@ -476,6 +495,7 @@ pub fn parse_ticks(
   struct_of_arrays: Option<bool>,
   order_by_steamid: Option<bool>,
   prop_states: Option<Vec<WantedPropState>>,
+  threads: Option<u32>,
 ) -> napi::Result<Value> {
   let mut real_names = match rm_user_friendly_names(&wanted_props) {
     Ok(names) => names,
@@ -539,7 +559,7 @@ pub fn parse_ticks(
     parse_grenades: false,
   };
 
-  let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+  let mut parser = create_parser(settings, threads)?;
   let output = parse_demo(bytes, &mut parser)?;
   real_names.push("tick".to_owned());
   real_names.push("steamid".to_owned());
@@ -591,7 +611,10 @@ pub fn parse_ticks(
 }
 
 #[napi]
-pub fn parse_player_info(path_or_buf: Either<String, Buffer>) -> napi::Result<Value> {
+pub fn parse_player_info(
+  path_or_buf: Either<String, Buffer>,
+  threads: Option<u32>,
+) -> napi::Result<Value> {
   let bytes = resolve_byte_type(path_or_buf)?;
   let huf = create_huffman_lookup_table();
 
@@ -613,7 +636,7 @@ pub fn parse_player_info(path_or_buf: Either<String, Buffer>) -> napi::Result<Va
     fallback_bytes: None,
     parse_grenades: false,
   };
-  let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+  let mut parser = create_parser(settings, threads)?;
   let output = parse_demo(bytes, &mut parser)?;
   let s = match serde_json::to_value(&output.player_md) {
     Ok(s) => s,
@@ -623,7 +646,10 @@ pub fn parse_player_info(path_or_buf: Either<String, Buffer>) -> napi::Result<Va
 }
 
 #[napi]
-pub fn parse_player_skins(path_or_buf: Either<String, Buffer>) -> napi::Result<Value> {
+pub fn parse_player_skins(
+  path_or_buf: Either<String, Buffer>,
+  threads: Option<u32>,
+) -> napi::Result<Value> {
   let bytes = resolve_byte_type(path_or_buf)?;
   let huf = create_huffman_lookup_table();
 
@@ -645,7 +671,7 @@ pub fn parse_player_skins(path_or_buf: Either<String, Buffer>) -> napi::Result<V
     fallback_bytes: None,
     parse_grenades: false,
   };
-  let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+  let mut parser = create_parser(settings, threads)?;
   let output = parse_demo(bytes, &mut parser)?;
   let s = match serde_json::to_value(&output.skins) {
     Ok(s) => s,
@@ -654,7 +680,10 @@ pub fn parse_player_skins(path_or_buf: Either<String, Buffer>) -> napi::Result<V
   Ok(s)
 }
 #[napi]
-pub fn list_updated_fields(path_or_buf: Either<String, Buffer>) -> napi::Result<Value> {
+pub fn list_updated_fields(
+  path_or_buf: Either<String, Buffer>,
+  threads: Option<u32>,
+) -> napi::Result<Value> {
   let bytes = resolve_byte_type(path_or_buf)?;
   let huf = create_huffman_lookup_table();
 
@@ -676,7 +705,7 @@ pub fn list_updated_fields(path_or_buf: Either<String, Buffer>) -> napi::Result<
     fallback_bytes: None,
     parse_grenades: false,
   };
-  let mut parser = Parser::new(settings, parser::parse_demo::ParsingMode::Normal);
+  let mut parser = create_parser(settings, threads)?;
   let output = parse_demo(bytes, &mut parser)?;
   let s = match serde_json::to_value(&output.uniq_prop_names) {
     Ok(s) => s,

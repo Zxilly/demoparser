@@ -18,6 +18,10 @@ class SignatureTest(TestCase):
     def test_demoparser_creation(self):
         DemoParser(demo_path)
         DemoParser(demo_path=demo_path)
+        DemoParser(demo_path, threads=1)
+        DemoParser(demo_path, threads=2)
+        with self.assertRaises(ValueError):
+            DemoParser(demo_path, threads=0)
 
 
     def test_parse_header_signature(self):
