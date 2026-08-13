@@ -1,4 +1,69 @@
-# Parse Speedup — Baseline (fixed BEFORE any optimization)
+# Parse benchmark log
+
+## Current validated benchmark — 2026-08-13
+
+Harness: `src/parser/src/bin/parse_bench.rs`. The current workload is a tick parse
+with representative player state, position, input, weapon and economy properties;
+events, projectiles, `wanted_other_props`, and stateful velocity properties are
+excluded. `both` mode now parses once in each mode and asserts exact equality of
+`df` and `df_per_player` before starting the timed runs. It also reports throughput
+and ST/MT speedup. An optional final argument selects the private Rayon pool size.
+
+Machine: AMD Ryzen 9 9950X3D, 16 physical cores / 32 logical processors, Windows.
+Fixture: `src/parser/test_demo.dem`, 60.6 MB. Release build, one warm-up, median of
+21 timed parses:
+
+```text
+target/release/parse_bench.exe test_demo.dem 21 both 16
+verify: ST and MT outputs match (14 columns)
+ST: median 0.654 s, 92.7 MB/s
+MT: median 0.173 s, 351.2 MB/s
+speedup: 3.79x
+```
+
+The host was noisy during these runs (for example, ST min/median/max was
+0.459/0.654/0.912 s), so small changes are accepted only after an A/B run using
+the same workload and session. Caching the current player entity in the collection
+loop improved the 21-run medians from 0.606/0.152 s (ST/MT) to 0.586/0.149 s,
+about 3.3%/2.0%. A row-buffer/transposition experiment regressed both modes and was
+reverted.
+
+Thread-count sweep, 11 timed MT parses per setting:
+
+| Threads | Median | Throughput |
+|---------|--------|------------|
+| 2 | 0.365 s | 166.1 MB/s |
+| 4 | 0.212 s | 285.4 MB/s |
+| 8 | 0.171 s | 353.4 MB/s |
+| 16 | **0.146 s** | **415.2 MB/s** |
+| 32 | 0.208 s | 292.0 MB/s |
+
+On this 16-core CPU, 16 workers are the best tested setting; using every logical
+processor is slower. Reproduce with:
+
+```text
+cargo run --release --bin parse_bench -- test_demo.dem 21 both 16
+```
+
+### Correctness correction
+
+The previous harness combined velocity properties with `ForceMultiThreaded`.
+Rechecking it produced different ST and MT checksums (`35e81514d0837e55` versus
+`dd96a2cc68cd6886`), because velocity depends on prior output rows and cannot be
+computed independently by segment. The old performance numbers below remain a
+historical record, but their claim of equivalent output for that combined workload
+was invalid.
+
+`velocity`, `velocity_X`, `velocity_Y`, and `velocity_Z` are now in the automatic
+non-multithreadable set, including when used as property-state filters. Normal mode
+therefore falls back to the correct serial path. `ForceMultiThreaded` remains an
+explicit unsafe override, so the benchmark intentionally uses only segment-safe
+properties and guards them with exact output comparison.
+
+## Historical baseline — 2026-06-16
+
+The workload and correctness guard differ from the current harness, so these values
+must not be compared directly with the current table.
 
 Harness: `src/parser/src/bin/parse_bench.rs` — representative full parse (player props +
 all events + ticks, `parse_ents=true`), release build (`lto=true, codegen-units=1`),
@@ -28,10 +93,9 @@ cargo build --release --bin parse_bench
 
 ---
 
-# Progress — results vs baseline
+### Historical progress — results vs baseline
 
-Same harness/machine. Median of 5. Output proven byte-identical via `CS2_CKSUM=1`
-(DefaultHasher over `df` + `df_per_player`); full suite 333 tests green.
+Same historical harness/machine. Median of 5; full suite at the time had 333 tests.
 
 | Demo | ST base | ST now | ST× | MT base | MT now | MT× |
 |------|---------|--------|-----|---------|--------|-----|
@@ -39,9 +103,9 @@ Same harness/machine. Median of 5. Output proven byte-identical via `CS2_CKSUM=1
 | test_demo  | 2.148 s | **0.764 s** | **2.81×** | 0.616 s | **0.161 s** | **3.83×** |
 | de_ancient | 4.331 s | **1.771 s** | **2.45×** | 1.096 s | **0.323 s** | **3.39×** |
 
-**Target 2× cleared on every demo, both single- and multi-threaded: ST ≈2.5–3.0×,
-MT ≈3.4–3.8× vs the vanilla upstream baseline.** Output verified byte-identical
-(`CS2_CKSUM`, df + df_per_player) on all demos.
+The raw timings cleared the historical 2× target on every demo. As explained in
+the correctness correction above, the combined velocity workload did not establish
+equivalent ST/MT output and these figures are retained for historical context only.
 
 ## Bottleneck → fix (the wins)
 
