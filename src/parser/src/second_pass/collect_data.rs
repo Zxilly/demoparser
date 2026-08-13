@@ -58,7 +58,7 @@ pub enum CoordinateAxis {
 impl<'a> SecondPassParser<'a> {
     pub fn collect_entities(&mut self) {
         if !self.prop_controller.event_with_velocity {
-            if !self.wanted_ticks.contains(&self.tick) && self.wanted_ticks.len() != 0 || self.wanted_events.len() != 0 {
+            if (!self.wanted_ticks.is_empty() && !self.wanted_ticks.contains(&self.tick)) || !self.wanted_events.is_empty() {
                 return;
             }
         }
@@ -103,13 +103,15 @@ impl<'a> SecondPassParser<'a> {
                         .or_insert_with(PropColumn::new)
                         .push(val);
                 }
+            } else if !self.direct_output_columns.is_empty() {
+                for (prop_index, prop_info) in self.prop_controller.prop_infos.iter().enumerate() {
+                    let val = self.find_prop_with_collect_cache(prop_info, entity_id, player, player_entity, &mut velocity_indicies, &mut button_mask);
+                    self.direct_output_columns[self.prop_output_slots[prop_index]].push(val);
+                }
             } else {
                 for prop_info in &self.prop_controller.prop_infos {
                     let val = self.find_prop_with_collect_cache(prop_info, entity_id, player, player_entity, &mut velocity_indicies, &mut button_mask);
-                    self.output
-                        .entry(prop_info.id)
-                        .or_insert_with(PropColumn::new)
-                        .push(val);
+                    self.output.entry(prop_info.id).or_insert_with(PropColumn::new).push(val);
                 }
             }
         }
@@ -126,6 +128,9 @@ impl<'a> SecondPassParser<'a> {
         button_mask: &mut Option<Option<u64>>,
     ) -> Option<Variant> {
         match prop_info.id {
+            PLAYER_X_ID => self.collect_cell_coordinate_player_fast(CoordinateAxis::X, player_entity),
+            PLAYER_Y_ID => self.collect_cell_coordinate_player_fast(CoordinateAxis::Y, player_entity),
+            PLAYER_Z_ID => self.collect_cell_coordinate_player_fast(CoordinateAxis::Z, player_entity),
             VELOCITY_ID => self.collect_velocity_cached(player, velocity_indicies).ok(),
             VELOCITY_X_ID => self.collect_velocity_axis_cached(player, CoordinateAxis::X, velocity_indicies).ok(),
             VELOCITY_Y_ID => self.collect_velocity_axis_cached(player, CoordinateAxis::Y, velocity_indicies).ok(),
@@ -133,6 +138,31 @@ impl<'a> SecondPassParser<'a> {
             _ if prop_info.prop_type == PropType::Button => self.get_button_prop_cached(prop_info, entity_id, button_mask).ok(),
             _ if prop_info.prop_type == PropType::Player => player_entity.and_then(|entity| entity.props.get(&prop_info.id)).cloned(),
             _ => self.find_prop(prop_info, entity_id, player).ok(),
+        }
+    }
+
+    #[inline(always)]
+    fn collect_cell_coordinate_player_fast(&self, axis: CoordinateAxis, entity: Option<&Entity>) -> Option<Variant> {
+        let (cell_id, offset_id) = match axis {
+            CoordinateAxis::X => (
+                self.prop_controller.special_ids.cell_x_player?,
+                self.prop_controller.special_ids.cell_x_offset_player?,
+            ),
+            CoordinateAxis::Y => (
+                self.prop_controller.special_ids.cell_y_player?,
+                self.prop_controller.special_ids.cell_y_offset_player?,
+            ),
+            CoordinateAxis::Z => (
+                self.prop_controller.special_ids.cell_z_player?,
+                self.prop_controller.special_ids.cell_z_offset_player?,
+            ),
+        };
+        match (entity?.props.get(&cell_id), entity?.props.get(&offset_id)) {
+            (Some(Variant::U32(cell)), Some(Variant::F32(offset))) => {
+                let cell_coord = *cell as f32 * (1 << CELL_BITS) as f32 - MAX_COORD;
+                Some(Variant::F32(cell_coord + offset))
+            }
+            _ => None,
         }
     }
 

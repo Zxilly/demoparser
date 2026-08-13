@@ -62,6 +62,9 @@ pub struct SecondPassParser<'a> {
     pub projectile_records: Vec<ProjectileRecord>,
     pub voice_data: Vec<(i32, CsvcMsgVoiceData)>,
     pub output: AHashMap<u32, PropColumn, RandomState>,
+    pub direct_output_columns: Vec<PropColumn>,
+    pub direct_output_ids: Vec<u32>,
+    pub prop_output_slots: Vec<usize>,
     pub header: HashMap<String, String>,
     pub skins: Vec<EconItem>,
     pub item_drops: Vec<EconItem>,
@@ -132,7 +135,16 @@ pub struct PlayerEndMetaData {
 }
 
 impl<'a> SecondPassParser<'a> {
-    pub fn create_output(self) -> SecondPassOutput {
+    pub fn create_output(mut self) -> SecondPassOutput {
+        for (id, column) in self
+            .direct_output_ids
+            .drain(..)
+            .zip(self.direct_output_columns.drain(..))
+        {
+            if column.len() != 0 {
+                self.output.insert(id, column);
+            }
+        }
         SecondPassOutput {
             voice_data: self.voice_data,
             chat_messages: self.chat_messages,
@@ -169,6 +181,31 @@ impl<'a> SecondPassParser<'a> {
         start_end_offset: Option<StartEndOffset>,
     ) -> Result<Self, DemoParserError> {
         let debug = env::args().nth(2).is_some_and(|arg| arg == "true");
+        let use_direct_output = first_pass_output.settings.parse_ents
+            && first_pass_output.settings.wanted_events.is_empty()
+            && !first_pass_output.order_by_steamid
+            && !first_pass_output.settings.parse_projectiles
+            && !first_pass_output.prop_controller.needs_velocity;
+        let (direct_output_ids, prop_output_slots, direct_output_columns) = if use_direct_output {
+            let mut ids = Vec::new();
+            let mut id_to_slot = AHashMap::default();
+            let slots = first_pass_output
+                .prop_controller
+                .prop_infos
+                .iter()
+                .map(|prop_info| {
+                    *id_to_slot.entry(prop_info.id).or_insert_with(|| {
+                        let slot = ids.len();
+                        ids.push(prop_info.id);
+                        slot
+                    })
+                })
+                .collect();
+            let columns = vec![PropColumn::new(); ids.len()];
+            (ids, slots, columns)
+        } else {
+            (vec![], vec![], vec![])
+        };
 
         Ok(SecondPassParser {
             uniq_prop_names: AHashSet::default(),
@@ -193,7 +230,11 @@ impl<'a> SecondPassParser<'a> {
                 .any(|prop| prop == "inventory"),
             net_tick: 0,
             c4_entity_id: None,
-            stringtable_players: first_pass_output.stringtable_players.clone(),
+            stringtable_players: if parse_all_packets {
+                first_pass_output.stringtable_players.clone()
+            } else {
+                BTreeMap::default()
+            },
             is_debug_mode: debug,
             projectile_records: vec![],
             parse_all_packets: parse_all_packets,
@@ -211,12 +252,19 @@ impl<'a> SecondPassParser<'a> {
             tick: -99999,
             players: BTreeMap::default(),
             output: AHashMap::with_capacity(first_pass_output.prop_controller.prop_infos.len()),
+            direct_output_columns,
+            direct_output_ids,
+            prop_output_slots,
             game_events: vec![],
             wanted_events: first_pass_output.settings.wanted_events.clone(),
             parse_entities: first_pass_output.settings.parse_ents,
             projectiles: BTreeSet::default(),
             baselines: first_pass_output.baselines.clone(),
-            string_tables: first_pass_output.string_tables.clone(),
+            string_tables: if parse_all_packets {
+                first_pass_output.string_tables.clone()
+            } else {
+                vec![]
+            },
             teams: Teams::new(),
             game_events_counter: AHashSet::default(),
             parse_projectiles: first_pass_output.settings.parse_projectiles,
